@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/sidra-gateway/go-pdk"
 	"github.com/sidra-gateway/go-pdk/server"
 )
 
