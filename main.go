@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -12,58 +10,84 @@ import (
 )
 
 var ctx = context.Background()
+
+// Konfigurasi Redis client
 var rdb = redis.NewClient(&redis.Options{
-	Addr: "localhost:6379", // Redis address
-	Password: "    ",      // Redis password
-	DB: 		0,         // Use default DB
+	Addr:     "localhost:6379", // Alamat Redis
+	Password: "",                // Password Redis
+	DB:       0,                 // Gunakan DB default
 })
 
-// CacheHandler struct to handle cache request
-type CacheHandler struct{}
-
-// NewCacheHandler initializes the handler for server
-func NewCacheHandler() *CacheHandler {
-	return &CacheHandler{}
-}
-
-// Access is triggered on every request
-func (h *CacheHandler) Access(pdk go.PDK) {
-	url, err := pdk.Request.GetPath()
-	if err != nil {
-		pdk.Response.Exit(500, "Failed to retrieve URL path", nil)
-		return
-	}
-
+// Fungsi untuk menangani request cache
+func cacheHandler(req server.Request) server.Response {
+	url := req.Path
 	cacheKey := "cache:" + url
+	resp := server.Response{}
+
+	// Mencoba mengambil data dari cache
 	cachedBody, err := rdb.Get(ctx, cacheKey).Result()
 	if err == nil {
-		// Return cached response if available
-		headers := map[string][]string{"x-cache": {"1"}}
-		pdk.Response.Exit(200, cachedBody, headers)
-		return
+		// Jika data ada di cache, kembalikan data dari cache
+		fmt.Println("Cache ditemukan untuk URL:", url)
+		resp.StatusCode = 200
+		resp.Body = cachedBody
+		resp.Headers = map[string]string{"x-cache": "1"}
+		return resp
 	} else if err != redis.Nil {
-		// Log and exit on Redis error
-		pdk.Response.Exit(500, "Error retrieving cache: "+err.Error(), nil)
-		return
+		// Jika terjadi kesalahan saat mengambil cache selain data tidak ditemukan
+		fmt.Println("Error saat mengambil cache:", err)
+		resp.StatusCode = 500
+		resp.Body = "Error retrieving cache: " + err.Error()
+		return resp
 	}
-	// Otherwise, proceed with request; response will be cached in the header phase
+
+	// Jika cache tidak ditemukan, lanjutkan request ke service backend
+	fmt.Println("Cache tidak ditemukan untuk URL:", url)
+	resp.StatusCode = 0 // Tanda untuk melanjutkan ke backend
+	return resp
 }
 
-// Header phase will cache the response after service request completes
-func (h *CacheHandler) Header(pdk go.PDK) {
-	statusCode, _ := pdk.Response.GetStatus()
-	if statusCode == 200 {
-		body, _ := pdk.Response.GetRawBody()
-		url, _ := pdk.Request.GetPath()
+// Fungsi untuk menyimpan respons ke cache
+func cacheHeaderHandler(resp server.Response, req server.Request) {
+	if resp.StatusCode == 200 {
+		url := req.Path
 		cacheKey := "cache:" + url
 
-	// Store the response in Redis cache for 5 minutes
-	err := rdb.Set(ctx, cacheKey, body, 5*time.Minute).Err()
-	if err != nil {
-		fmt.Println("Error caching response:", err)
+		// Simpan respons ke Redis cache dengan durasi 5 menit
+		err := rdb.Set(ctx, cacheKey, resp.Body, 5*time.Minute).Err()
+		if err != nil {
+			fmt.Println("Error saat menyimpan response ke cache:", err)
+		} else {
+			fmt.Println("Response disimpan ke cache untuk URL:", url)
 		}
 	}
 }
 
 func main() {
-	server.NewServer(NewCacheHandler, "unix", "tmp/cache.sock").Start()
+	fmt.Println("Memulai server cache plugin pada /tmp/cache.sock...")
+
+	err := server.NewServer("cache", func(req server.Request) server.Response {
+		// Memanggil handler cache untuk memeriksa cache
+		resp := cacheHandler(req)
+		if resp.StatusCode != 0 {
+			// Jika respons ditemukan di cache, kembalikan respons
+			return resp
+		}
+
+		// Jika tidak ada di cache, lanjutkan ke backend
+		// Setelah mendapatkan respons dari backend, simpan ke cache
+		resp.StatusCode = 200 // Misalnya respons backend sukses
+		resp.Body = "Data dari backend" // Ini seharusnya hasil dari backend sebenarnya
+		cacheHeaderHandler(resp, req)
+
+		return resp
+	}).Start()
+
+	if err != nil {
+		fmt.Println("Error saat memulai server:", err)
+		return
+	}
+
+	fmt.Println("Server cache plugin berjalan pada /tmp/cache.sock")
+	select {} // Menjaga server tetap berjalan tanpa keluar
+}
