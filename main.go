@@ -2,12 +2,16 @@ package main
 
 import (
 	//"context"
+	//"bytes"
+	"crypto/sha256"
 	//"encoding/json"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"time"
+	"strings"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/sidra-gateway/go-pdk/server"
@@ -26,59 +30,68 @@ func init() {
 	})
 }
 
+func generateCacheKey(method, path, body string) string {
+	// Hash untuk body request agar key cache unik
+	hash := sha256.Sum256([]byte(body))
+	bodyHash := hex.EncodeToString(hash[:])
+	return fmt.Sprintf("cache:%s:%s:%s", method, path, bodyHash)
+}
+
 // Fungsi untuk menangani request cache
 func cacheHandler(req server.Request) server.Response {
-	// Ambil URL request atau parameter unik sebagai key cache
-	cacheKey := fmt.Sprintf("cache:%s:%s", req.Method, req.Path)
+	//Generate cache key berdasarkan method, path, dan hash body
+	cacheKey := generateCacheKey(req.Method, req.Path, req.Body)
 
 	//Cek apakah data sdh ada di Redis
 	cachedData, err := redisClient.Get(ctx, cacheKey).Result()
-	if err == redis.Nil {
-		//Data tdk ditemukan di Redis, lanjut ke backend
-		log.Println("cache miss, forwarding request to backend")
-		client := &http.Client{}
-		backendURL := "http://localhost:7070" + req.Path
-		backendReq, err := http.NewRequest(req.Method, backendURL, nil)
-		if err != nil {
-			return server.Response{StatusCode: 500, Body: "Backend request error: " + err.Error()}
-		}
-
-		//Kirim request ke backend
-		backendResp, err := client.Do(backendReq)
-		if err != nil {
-			return server.Response{StatusCode: 500, Body: "Backend error: " + err.Error()}
-		}
-		defer backendResp.Body.Close()
-
-		// Baca respons dari backend
-		body, err := io.ReadAll(backendResp.Body)
-		if err != nil {
-			return server.Response{StatusCode: 500, Body: "Error reading backend response: " + err.Error()}
-		}
-
-		// Simpan ke Redis dengan TTL 5 menit
-		err = redisClient.Set(ctx, cacheKey, string(body), 5*time.Minute).Err()
-		if err != nil {
-			log.Printf("Failed to set cache: %v", err)
-		}
-
-		// Kembalikan respons dari backend
-		return server.Response{
-			StatusCode: backendResp.StatusCode,
-			Body:       string(body),
-			Headers:    map[string]string{"x-cache": "0"}, // Menandakan respons dari backend
-		}
-	} else if err != nil {
-		// Redis error
-		return server.Response{StatusCode: 500, Body: "Redis error: " + err.Error()}
-	} else {
+	if err == nil && cachedData != "" {
 		// Cache hit
 		log.Println("Cache hit, returning data from Redis.")
 		return server.Response{
 			StatusCode: 200,
 			Body:       cachedData,
-			Headers:    map[string]string{"x-cache": "1"}, // Menandakan respons dari cache
+			Headers:    map[string]string{"X-Cache": "1"},
 		}
+	}
+
+	// Cache miss, log dan teruskan request ke backend
+	log.Println("Cache miss, forwarding request to backend.")
+
+	// Ambil body dari request client
+	bodyReader := strings.NewReader(req.Body)
+
+	// Buat request ke backend
+	backendURL := "http://localhost:7070" + req.Path
+	backendReq, err := http.NewRequest(req.Method, backendURL, bodyReader)
+	if err != nil {
+		return server.Response{StatusCode: 500, Body: "Backend request error: " + err.Error()}
+	}
+
+	// Salin header dari request client ke backend
+	for key, value := range req.Headers {
+		backendReq.Header.Set(key, value)
+	}
+
+	client := &http.Client{}
+	backendResp, err := client.Do(backendReq)
+	if err != nil {
+		return server.Response{StatusCode: 500, Body: "Backend error: " + err.Error()}
+	}
+	defer backendResp.Body.Close()
+
+	// Baca respons dari backend
+	body, _ := io.ReadAll(backendResp.Body)
+
+	// Format cache value
+	cacheValue := fmt.Sprintf("Request received at target server: \nPath: %s\nMethod: %s\nBody: %s\n", req.Path, req.Method, req.Body)
+
+	// Simpan data ke Redis dgn ttl
+	redisClient.Set(ctx, cacheKey, cacheValue, 5*time.Minute)
+
+	return server.Response{
+		StatusCode: backendResp.StatusCode,
+		Body:       string(body),
+		Headers:    map[string]string{"X-Cache": "0"},
 	}
 }
 
@@ -87,39 +100,6 @@ func main() {
 
 	//Mulai server plugin
 	err := server.NewServer("cache", cacheHandler).Start() 
-	//{
-	// 	cacheKey := fmt.Sprintf("cache:%s:%s", req.Method, req.Path)
-
-	// 	// Cek cache terlebih dahulu
-	// 	resp := cacheHandler(req)
-	// 	if resp.StatusCode != 0 {
-	// 		return resp // Kembalikan cache jika ada
-	// 	}
-
-	// 	// Lanjutkan request ke backend jk cache tidak ditemukan
-	// 	client := &http.Client{}
-	// 	backendURL := "http://localhost:7070" + req.Path
-	// 	backendReq, err := http.NewRequest(req.Method, backendURL, nil)
-	// 	if err != nil {
-	// 		return server.Response{StatusCode: 500, Body: "Backend request error: " + err.Error()}
-	// 	}
-
-	// 	backendResp, err := client.Do(backendReq)
-	// 	if err != nil {
-	// 		return server.Response{StatusCode: 500, Body: "Backend error: " + err.Error()}
-	// 	}
-	// 	defer backendResp.Body.Close()
-
-	// 	body, _ := io.ReadAll(backendResp.Body)
-	// 	cacheResponse(cacheKey, string(body)) // Simpan respons backend ke Redis
-
-	// 	return server.Response{
-	// 		StatusCode: backendResp.StatusCode,
-	// 		Body:       string(body),
-	// 		Headers:    map[string]string{"x-cache": "0"}, // Header untuk menandai respons langsung dari backend
-	// 	}
-	// }).Start()
-
 	if err != nil {
 		fmt.Println("Error memulai server:", err)
 	}
