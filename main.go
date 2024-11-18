@@ -64,6 +64,7 @@ func cacheHandler(req server.Request) server.Response {
 	backendURL := "http://localhost:7070" + req.Path
 	backendReq, err := http.NewRequest(req.Method, backendURL, bodyReader)
 	if err != nil {
+		log.Println("Error creating backend request:", err)
 		return server.Response{StatusCode: 500, Body: "Backend request error: " + err.Error()}
 	}
 
@@ -75,22 +76,31 @@ func cacheHandler(req server.Request) server.Response {
 	client := &http.Client{}
 	backendResp, err := client.Do(backendReq)
 	if err != nil {
+		log.Println("Error sending request to backend:", err)
 		return server.Response{StatusCode: 500, Body: "Backend error: " + err.Error()}
 	}
 	defer backendResp.Body.Close()
 
 	// Baca respons dari backend
-	body, _ := io.ReadAll(backendResp.Body)
+	body, err := io.ReadAll(backendResp.Body)
+	if err != nil {
+		log.Println("Error reading backend response:", err)
+		return server.Response{StatusCode: 500, Body: "Error reading backend response."}
+	}
 
 	// Format cache value
-	cacheValue := fmt.Sprintf("Request received at target server: \nPath: %s\nMethod: %s\nBody: %s\n", req.Path, req.Method, req.Body)
+	cacheValue := string(body)
 
 	// Simpan data ke Redis dgn ttl
-	redisClient.Set(ctx, cacheKey, cacheValue, 5*time.Minute)
+	err = redisClient.Set(ctx, cacheKey, cacheValue, 5*time.Minute).Err()
+	if err != nil {
+		log.Println("Error saving data to Redis:", err)
+	}
 
+	// Kirim respons ke client
 	return server.Response{
 		StatusCode: backendResp.StatusCode,
-		Body:       string(body),
+		Body:       cacheValue,
 		Headers:    map[string]string{"X-Cache": "0"},
 	}
 }
