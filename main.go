@@ -1,17 +1,11 @@
 package main
 
 import (
-	//"context"
-	//"bytes"
 	"crypto/sha256"
-	//"encoding/json"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"time"
-	"strings"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/sidra-gateway/go-pdk/server"
@@ -44,71 +38,50 @@ func cacheHandler(req server.Request) server.Response {
 
 	//Cek apakah data sdh ada di Redis
 	cachedData, err := redisClient.Get(ctx, cacheKey).Result()
+	ttl, _ := redisClient.TTL(ctx, cacheKey).Result()
 	if err == nil && cachedData != "" {
 		// Cache hit
 		log.Println("Cache hit, returning data from Redis.")
 		return server.Response{
 			StatusCode: 200,
 			Body:       cachedData,
-			Headers:    map[string]string{"X-Cache": "1"},
+			Headers:    map[string]string{"Cache-Control": fmt.Sprintf("public,max-age=%d", ttl.Milliseconds())},
 		}
 	}
 
-	// Cache miss, log dan teruskan request ke backend
-	log.Println("Cache miss, forwarding request to backend.")
-
-	// Ambil body dari request client
-	bodyReader := strings.NewReader(req.Body)
-
 	// Buat request ke backend
-	backendURL := "http://localhost:7070" + req.Path
-	backendReq, err := http.NewRequest(req.Method, backendURL, bodyReader)
-	if err != nil {
-		log.Println("Error creating backend request:", err)
-		return server.Response{StatusCode: 500, Body: "Backend request error: " + err.Error()}
+	return server.Response{
+		StatusCode: 200,
+		Headers:    map[string]string{"Cache-Control": "no-cache"},
 	}
+}
 
-	// Salin header dari request client ke backend
-	for key, value := range req.Headers {
-		backendReq.Header.Set(key, value)
+func cacheResponseHandler(req server.Request) server.Response {
+	//Generate cache key berdasarkan method, path, dan hash body
+	if req.Headers["Cache-Control"] != "no-cache" {
+		return server.Response{}
 	}
+	cacheKey := generateCacheKey(req.Method, req.Path, req.Body)
 
-	client := &http.Client{}
-	backendResp, err := client.Do(backendReq)
-	if err != nil {
-		log.Println("Error sending request to backend:", err)
-		return server.Response{StatusCode: 500, Body: "Backend error: " + err.Error()}
-	}
-	defer backendResp.Body.Close()
-
-	// Baca respons dari backend
-	body, err := io.ReadAll(backendResp.Body)
-	if err != nil {
-		log.Println("Error reading backend response:", err)
-		return server.Response{StatusCode: 500, Body: "Error reading backend response."}
-	}
-
-	// Format cache value
-	cacheValue := string(body)
-
-	// Simpan data ke Redis dgn ttl
-	err = redisClient.Set(ctx, cacheKey, cacheValue, 5*time.Minute).Err()
+	// Simpan data ke Redis
+	err := redisClient.Set(ctx, cacheKey, req.Body, 1*time.Hour).Err()
 	if err != nil {
 		log.Println("Error saving data to Redis:", err)
 	}
 
-	// Kirim respons ke client
-	return server.Response{
-		StatusCode: backendResp.StatusCode,
-		Body:       cacheValue,
-		Headers:    map[string]string{"X-Cache": "0"},
-	}
+	return server.Response{}
 }
 
 func main() {
 	fmt.Println("Memulai plugin cache pada /tmp/cache.sock...")
 
 	//Mulai server plugin
+	go func() {
+		err := server.NewServer("cache.response", cacheResponseHandler).Start() 
+		if err != nil {
+			fmt.Println("Error memulai server:", err)
+		}
+	}()
 	err := server.NewServer("cache", cacheHandler).Start() 
 	if err != nil {
 		fmt.Println("Error memulai server:", err)
