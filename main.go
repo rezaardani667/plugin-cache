@@ -22,6 +22,10 @@ func init() {
 		Password: "",           //No password
 		DB: 0,                  //Default DB
 	})
+	_, err := redisClient.Ping(ctx).Result()
+	if err != nil {
+		log.Fatalln("Error connecting to Redis:", err)
+	}
 }
 
 func generateCacheKey(method, path, body string) string {
@@ -38,52 +42,52 @@ func cacheHandler(req server.Request) server.Response {
 
 	//Cek apakah data sdh ada di Redis
 	cachedData, err := redisClient.Get(ctx, cacheKey).Result()
-	ttl, _ := redisClient.TTL(ctx, cacheKey).Result()
-	if err == nil && cachedData != "" {
+	
+	if err == nil {
 		// Cache hit
+		ttl, _ := redisClient.TTL(ctx, cacheKey).Result()
 		log.Println("Cache hit, returning data from Redis.")
 		return server.Response{
 			StatusCode: 200,
 			Body:       cachedData,
-			Headers:    map[string]string{"Cache-Control": fmt.Sprintf("public,max-age=%d", ttl.Milliseconds())},
+			Headers:    map[string]string{"Cache-Control": fmt.Sprintf("public,max-age=%d", int(ttl.Seconds()))},
 		}
 	}
 
 	// Buat request ke backend
+	backendResponse := fmt.Sprintf("Response from backend for path: %s", req.Path)
+	log.Println("Cache miss. Accessing backend...")
 	return server.Response{
 		StatusCode: 200,
+		Body:       backendResponse,
 		Headers:    map[string]string{"Cache-Control": "no-cache"},
 	}
 }
 
 func cacheResponseHandler(req server.Request) server.Response {
 	//Generate cache key berdasarkan method, path, dan hash body
-	if req.Headers["Cache-Control"] != "no-cache" {
-		return server.Response{}
+		cacheKey := generateCacheKey(req.Method, req.Path, req.Body)
+		err := redisClient.Set(ctx, cacheKey, req.Body, 5*time.Minute).Err()
+		if err != nil {
+			log.Println("Error saving data to Redis:", err)
+	} else {
+		log.Println("Data saved to Redis with key:", cacheKey)
 	}
-	cacheKey := generateCacheKey(req.Method, req.Path, req.Body)
-
-	// Simpan data ke Redis
-	err := redisClient.Set(ctx, cacheKey, req.Body, 1*time.Hour).Err()
-	if err != nil {
-		log.Println("Error saving data to Redis:", err)
-	}
-
 	return server.Response{}
 }
 
 func main() {
 	fmt.Println("Memulai plugin cache pada /tmp/cache.sock...")
 
-	//Mulai server plugin
+	//Start both servers for different phases
 	go func() {
 		err := server.NewServer("cache.response", cacheResponseHandler).Start() 
 		if err != nil {
-			fmt.Println("Error memulai server:", err)
+			fmt.Println("Error starting cache response handler:", err)
 		}
 	}()
 	err := server.NewServer("cache", cacheHandler).Start() 
 	if err != nil {
-		fmt.Println("Error memulai server:", err)
+		fmt.Println("Error starting cache handler:", err)
 	}
 }
