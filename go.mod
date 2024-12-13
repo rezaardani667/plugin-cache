@@ -1,11 +1,11 @@
-module plugin-cache
+module github.com/sidra-api/plugin-cache
 
-go 1.23.1
+go 1.23.2
 
 require (
 	github.com/go-redis/redis/v8 v8.11.5
-	github.com/sidra-gateway/go-pdk v1.0.3
-	golang.org/x/net v0.31.0
+	github.com/sidra-gateway/go-pdk v1.0.4
+	golang.org/x/net v0.32.0
 )
 
 require (
