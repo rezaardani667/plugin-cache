@@ -1,60 +1,95 @@
 # Plugin Cache by URL
 
-## Deskripsi
-Plugin Cache by URL digunakan untuk meningkatkan performa Sidra Api dengan menyimpan hasil respons dari backend berdasarkan URL di Redis. Plugin ini memungkinkan pengambilan data langsung dari cache jika data tersedia, mengurangi beban pada backend.
+## Description
+
+The Cache by URL plugin enhances the performance of Sidra Api by storing backend responses in Redis based on URLs. By leveraging caching, this plugin reduces backend load and speeds up responses for repeated requests.
 
 ---
 
-## Cara Kerja
-1. **Fase Akses (Access)**
-   - Plugin memeriksa apakah data sudah tersedia di Redis menggunakan key yang dihasilkan dari kombinasi method, path, dan hash body request.
-   - Jika data ditemukan (*cache hit*), respons dikembalikan langsung dari Redis.
-   - Jika tidak ditemukan (*cache miss*), request diteruskan ke backend.
+## How It Works
 
-2. **Fase Header (Header)**
-   - Respons dari backend disimpan ke Redis dengan TTL (Time to Live) default selama 5 menit.
+### Access Phase
 
----
+- The plugin checks Redis for cached data using a unique key generated from:
+   - **HTTP Method** (e.g., GET, POST)
+   - **URL Path** (e.g., `/api/v1/resource`)
+   - **Request Body Hash** to differentiate content
+- If data is found (*cache hit*):
+   - The plugin returns the data from Redis without forwarding the request to the backend
+- If data is not found (*cache miss*):
+   - The plugin forwards the request to the backend for processing
 
-## Konfigurasi
-- **Redis**: Plugin memerlukan Redis untuk menyimpan data cache.
-  - **Host**: `localhost:6379` (default)
-  - **Password**: Tidak ada password (default)
-  - **DB**: `0` (default)
+### Header Phase
 
----
-
-## Cara Menjalankan
-1. **Pastikan Redis berjalan** di alamat `localhost:6379`.
-2. Tambahkan file `main.go` ini ke direktori plugin Sidra Gateway, misalnya: `plugins/cache/main.go`.
-3. Kompilasi dan jalankan Sidra Gateway.
-4. Plugin akan otomatis terhubung melalui UNIX socket pada path `/tmp/cache.sock`.
+- After receiving the backend response, the plugin stores it in Redis with:
+   - A **unique key** as described above
+   - A **TTL (Time to Live)** defaulting to 5 minutes (configurable via environment variables)
 
 ---
 
-## Pengujian
+## Configuration
+
+### Environment Variables
+
+- **REDIS_ADDR**: Redis address (default: `localhost:6379`)
+- **REDIS_PASSWORD**: Redis password (default: none)
+- **REDIS_DB**: Redis database (default: `0`)
+- **CACHE_TTL**: Cache lifetime in seconds (default: `300` seconds)
+
+---
+
+## How to Run
+
+1. **Ensure Redis is running** at the specified address, e.g., `localhost:6379`
+2. **Deploy the plugin** to Sidra Api's directory (e.g., `plugins/cache`)
+3. Start Sidra Api with the plugin registered
+4. The plugin will automatically connect using a UNIX socket (`/tmp/cache.sock`)
+
+---
+
+## Testing
 
 ### Endpoint
+
 - **URL**: `http://localhost:3080/api/v1/resource`
 
-### Langkah Pengujian
-1. Kirim request GET dengan body tertentu menggunakan Postman:
-   ```plaintext
-   GET http://localhost:3080/api/v1/resource
-   Body: {"data":"example"}
+### Testing Steps
+
+1. Send a request to the endpoint using Postman:
+    ```http
+    GET http://localhost:3080/api/v1/resource
+    Content-Type: application/json
+    Body: {"data": "example"}
+    ```
+2. Observe the response and note the time taken
+3. Send the same request again and observe the reduced response time
+
+### Cache Verification
+
+#### Cache Miss
+
+- On the first request, data will be fetched from the backend
+
+#### Cache Hit
+
+- Send the same request again. Data should be returned directly from Redis
+
+#### Verify in Redis
+
+- Use the following commands:
+   ```sh
+   redis-cli KEYS cache:*
+   redis-cli GET <cache_key>
    ```
-2. Periksa Redis:
-   - Gunakan perintah `redis-cli KEYS cache:*` untuk melihat key yang tersimpan.
-   - Gunakan `redis-cli GET <key>` untuk memeriksa nilai yang tersimpan.
-3. Kirim request GET yang sama lagi dan pastikan data diambil dari cache (*cache hit*).
+
+### Key Notes
+
+- **Cache TTL**: By default, the cache is stored for 5 minutes
+- **Use Case**: Best suited for backend responses that rarely change, such as static or semi-static data
+- **Error Handling**: If Redis fails to store data, the plugin still forwards the backend response
 
 ---
 
-## Catatan Penting
-- **TTL Cache**: Data cache akan disimpan selama 5 menit secara default.
-- **Kegunaan**: Gunakan plugin ini hanya untuk data yang jarang berubah.
+## License
 
----
-
-## Lisensi
 MIT License
