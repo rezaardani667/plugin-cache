@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -62,7 +61,7 @@ func generateCacheKey(method, path, body string) string {
 	// Buat hash SHA256 dari body request agar key unik untuk setiap konten
 	hash := sha256.Sum256([]byte(body))
 	bodyHash := hex.EncodeToString(hash[:])
-	return fmt.Sprintf("cache:%s:%s:%s", method, path, bodyHash)
+	return "cache:" + method + ":" + path + ":" + bodyHash
 }
 
 // Handler untuk menangani fase `access` (cek cache di Redis)
@@ -80,12 +79,12 @@ func cacheHandler(req server.Request) server.Response {
 		return server.Response{
 			StatusCode: 200,
 			Body:       cachedData,
-			Headers:    map[string]string{"Cache-Control": fmt.Sprintf("public,max-age=%d", int(ttl.Seconds()))},
+			Headers:    map[string]string{"Cache-Control": "public,max-age=" + strconv.Itoa(int(ttl.Seconds()))},
 		}
 	}
 
 	// Buat request ke backend
-	backendResponse := fmt.Sprintf("Response from backend for path: %s", req.Path)
+	backendResponse := "Response from backend for path: " + req.Path
 	log.Println("Cache miss. Accessing backend...")
 	return server.Response{
 		StatusCode: 200,
@@ -108,17 +107,17 @@ func cacheResponseHandler(req server.Request) server.Response {
 }
 
 func main() {
-	fmt.Println("Memulai plugin cache dengan Env Var...")
+	log.Println("Memulai plugin cache dengan Env Var...")
 
 	//Start both servers for different phases
 	go func() {
 		err := server.NewServer("cache.response", cacheResponseHandler).Start() 
 		if err != nil {
-			fmt.Println("Error starting cache response handler:", err)
+			log.Println("Error starting cache response handler:", err)
 		}
 	}()
 	err := server.NewServer("cache", cacheHandler).Start() 
 	if err != nil {
-		fmt.Println("Error starting cache handler:", err)
+		log.Println("Error starting cache handler:", err)
 	}
 }
