@@ -93,3 +93,5 @@ The Cache by URL plugin enhances the performance of Sidra Api by storing backend
 ## License
 
 MIT License
+
+This documentation provides a comprehensive explanation of how the Cache by URL plugin works, how to configure it, how to test it with Postman, and how to verify cache in Redis. It serves as a clear guide for implementing and maintaining the cache plugin in Sidra API.

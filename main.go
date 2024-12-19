@@ -109,14 +109,21 @@ func cacheResponseHandler(req server.Request) server.Response {
 func main() {
 	log.Println("Memulai plugin cache dengan Env Var...")
 
+	// Ambil plugin name dari environment variable
+	pluginName := os.Getenv("PLUGIN_NAME")
+	if pluginName == "" {
+		pluginName = "plugin-cache" // Set default name
+		log.Println("PLUGIN_NAME not set, using default: plugin-cache")
+	}
+
 	//Start both servers for different phases
 	go func() {
-		err := server.NewServer("cache.response", cacheResponseHandler).Start() 
+		err := server.NewServer(pluginName + ".response", cacheResponseHandler).Start() 
 		if err != nil {
 			log.Println("Error starting cache response handler:", err)
 		}
 	}()
-	err := server.NewServer("cache", cacheHandler).Start() 
+	err := server.NewServer(pluginName, cacheHandler).Start() 
 	if err != nil {
 		log.Println("Error starting cache handler:", err)
 	}
