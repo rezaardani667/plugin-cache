@@ -95,15 +95,24 @@ func cacheHandler(req server.Request) server.Response {
 
 // Handler untuk menangani fase `header_filter` (simpan respons ke cache)
 func cacheResponseHandler(req server.Request) server.Response {
-	//Generate cache key berdasarkan method, path, dan body request
-		cacheKey := generateCacheKey(req.Method, req.Path, req.Body)
-		err := redisClient.Set(ctx, cacheKey, req.Body, cacheTTL).Err()
-		if err != nil {
-			log.Println("Error saving data to Redis:", err)
-	} else {
-		log.Println("Data saved to Redis with key:", cacheKey)
+	cacheKey := generateCacheKey(req.Method, req.Path, req.Body)
+
+	// Simpan respons ke Redis dengan TTL
+	err := redisClient.Set(ctx, cacheKey, req.Body, cacheTTL).Err()
+	if err != nil {
+		log.Println("Error saving data to Redis:", err)
 	}
-	return server.Response{}
+
+	// Setel header Cache-Control untuk memberitahukan TTL ke klien
+	ttl := int(cacheTTL.Seconds())
+	headers := map[string]string{
+		"Cache-Control": "public, max-age=" + strconv.Itoa(ttl),
+	}
+
+	return server.Response{
+		StatusCode: 200,
+		Headers:    headers,
+	}
 }
 
 func main() {
@@ -112,8 +121,8 @@ func main() {
 	// Ambil plugin name dari environment variable
 	pluginName := os.Getenv("PLUGIN_NAME")
 	if pluginName == "" {
-		pluginName = "plugin-cache" // Set default name
-		log.Println("PLUGIN_NAME not set, using default: plugin-cache")
+		pluginName = "cache" // Set default name
+		log.Println("PLUGIN_NAME not set, using default: cache")
 	}
 
 	//Start both servers for different phases
